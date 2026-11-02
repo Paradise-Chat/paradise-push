@@ -1,0 +1,142 @@
+#+TITLE: Paradise Push Gateway
+#+AUTHOR: Jaggar
+#+STARTUP: overview
+
+* Overview
+
+Paradise Push is a lightweight, multi-protocol push notification multiplexer built on Clojure and JDK 21. It replaces single-protocol daemons like Sygnal by decoupling protocol-specific webhook normalization from transport-level HTTP/2 dispatch.
+
+* Configuration
+
+Application credentials and listener settings live in =configs/config.edn= (or the path specified by the =CONFIG_PATH= environment variable):
+
+#+begin_src clojure
+{:http {:host "0.0.0.0"
+        :port 5000}
+ :nrepl {:host "127.0.0.1"
+         :port 7888}
+ :routes-dir "routes"
+ :apps {"moi.paradise.android"
+        {:type :fcm
+         :project-id "your-fcm-project-id"
+         :service-account-file "configs/service-account.json"}
+
+        "moi.paradise.ios"
+        {:type :apns
+         :sandbox? false
+         :key-id "YOUR_KEY_ID"
+         :team-id "YOUR_TEAM_ID"
+         :topic "com.gigiaj.paradise"
+         :keyfile "configs/AuthKey.p8"
+         :default-payload {:aps {:content-available 1
+                                 :mutable-content 1
+                                 :sound "default"
+                                 :alert {:title "New Message"
+                                         :body "Open Paradise to view."}}}}
+
+        "moi.paradise.devios"
+        {:type :apns
+         :sandbox? true
+         :key-id "YOUR_KEY_ID"
+         :team-id "YOUR_TEAM_ID"
+         :topic "com.gigiaj.paradise"
+         :keyfile "configs/AuthKey.p8"
+         :default-payload {:aps {:content-available 1
+                                 :mutable-content 1
+                                 :sound "default"
+                                 :alert {:title "New Message"
+                                         :body "Open Paradise to view."}}}}}}
+#+end_src
+
+* Protocol Route Handlers
+
+Each file in =routes/= evaluates to a map defining how an incoming webhook is normalized into dispatch jobs and how rejected pushkeys are formatted in the HTTP response.
+
+| Key                | Description                                                                 |
+|--------------------+-----------------------------------------------------------------------------|
+| =:path=            | Exact URI path matched by the HTTP server (e.g., =/_matrix/push/v1/notify=) |
+| =:engine=          | Protocol identifier tagged into the outbound payload                        |
+| =:script=          | Client shadow worker script to invoke on the device                         |
+| =:normalize=       | Function taking parsed request JSON and returning a vector of dispatch jobs |
+| =:format-response= | Function taking a sequence of rejected tokens and returning a response map  |
+
+Editing an existing =.clj= file or dropping a new protocol file into =routes/= reloads that route into =@paradise.push.router/routes-registry= immediately.
+
+* Development & Building
+
+** Run Locally with nREPL
+
+Starts the HTTP server on port =5000=, watches =routes/=, and binds an nREPL server on =127.0.0.1:7888=:
+
+#+begin_src sh
+clojure -M:dev
+#+end_src
+
+** Build Production Uberjar
+
+Compiles an AOT standalone jar to =target/paradise-push.jar=:
+
+#+begin_src sh
+clojure -T:build uber
+#+end_src
+
+** Run Standalone Jar
+
+Runs the compiled uberjar using Generational ZGC:
+
+#+begin_src sh
+java -XX:+UseZGC -XX:+ZGenerational -jar target/paradise-push.jar
+#+end_src
+
+* Docker Deployment
+
+=configs/= and =routes/= are mounted read-only into the container at =/app/configs= and =/app/routes= so credentials and protocol routes stay decoupled from the image.
+
+#+begin_src sh
+docker compose up -d --build
+docker compose logs -f
+#+end_src
+
+* Verification & Testing
+
+** Health Check & Hot-Reload Check
+
+#+begin_src sh
+curl -i http://127.0.0.1:5000/health
+touch routes/matrix.clj
+docker compose logs --tail=5
+#+end_src
+
+** Matrix Push Ingress (=POST /_matrix/push/v1/notify=)
+
+#+begin_src sh
+curl -i -X POST http://127.0.0.1:5000/_matrix/push/v1/notify \
+  -H "Content-Type: application/json" \
+  -d '{
+    "notification": {
+      "event_id": "$test_event_1",
+      "room_id": "!test_room:example.org",
+      "counts": {"unread": 1},
+      "devices": [
+        {
+          "app_id": "moi.paradise.android",
+          "pushkey": "YOUR_DEVICE_FCM_TOKEN"
+        }
+      ]
+    }
+  }'
+#+end_src
+
+** Fluxer Push Ingress (=POST /v1/push/fluxer=)
+
+#+begin_src sh
+curl -i -X POST http://127.0.0.1:5000/v1/push/fluxer \
+  -H "Content-Type: application/json" \
+  -d '{
+    "app_id": "moi.paradise.android",
+    "pushkey": "YOUR_DEVICE_FCM_TOKEN",
+    "account_id": "fluxer_user_1",
+    "event_id": "msg_999",
+    "room_id": "chan_111"
+  }'
+#+end_src
