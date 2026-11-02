@@ -1,0 +1,12 @@
+{:paths ["src" "resources"]
+ :deps {org.clojure/clojure {:mvn/version "1.12.0"}
+        http-kit/http-kit {:mvn/version "2.8.0"}
+        cheshire/cheshire {:mvn/version "5.13.0"}
+        nrepl/nrepl {:mvn/version "1.3.0"}}
+ :aliases
+ {:run {:jvm-opts ["-XX:+UseZGC" "-XX:+ZGenerational"]
+        :main-opts ["-m" "paradise.push.main"]}
+  :dev {:jvm-opts ["-Djdk.tracePinnedThreads=short"]
+        :main-opts ["-m" "paradise.push.main" "--nrepl"]}
+  :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.5"}}
+          :ns-default build}}}
