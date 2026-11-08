@@ -2,12 +2,14 @@
   (:gen-class)
   (:require [cheshire.core :as json]
             [clojure.edn :as edn]
+            [clojure.string :as str]
             [nrepl.server :as nrepl]
             [org.httpkit.server :as http]
             [paradise.push.apns :as apns]
             [paradise.push.fcm :as fcm]
             [paradise.push.router :as router]
-            [paradise.push.server :as server])
+            [paradise.push.server :as server]
+            [paradise.push.webpush :as webpush])
   (:import [java.util.concurrent Executors]))
 
 (defn- init-app-config [[app-id app-cfg]]
@@ -24,6 +26,16 @@
      (let [pem (slurp (:keyfile app-cfg))]
        (assoc app-cfg
               :private-key (apns/load-p8-private-key pem)))
+
+     :webpush
+     (let [pem     (slurp (:vapid-private-key app-cfg))
+           pub-key (-> (or (:vapid-public-key app-cfg)
+                           (when-let [f (:vapid-public-key-file app-cfg)]
+                             (slurp f)))
+                       str/trim)]
+       (assoc app-cfg
+              :private-key (webpush/load-vapid-private-key pem)
+              :public-key  pub-key))
 
      app-cfg)])
 
@@ -49,6 +61,9 @@
                                (deep-merge (or default-payload {}))
                                (merge data))]
           (apns/send-apns! app-cfg pushkey merged))
+
+        :webpush
+        (webpush/send-webpush! app-cfg pushkey data default-payload)
 
         {:status :unregistered})
       {:status :unregistered})))
